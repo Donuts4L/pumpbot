@@ -39,12 +39,9 @@ async def send_telegram_message(chat_id, text):
 async def analyze_with_gpt(events, chat_id, duration):
     token = events[0]['params'].get('mint', 'UNKNOWN')[:6]
     prompt = f"""
-You're a ruthless degen sniper. Analyze this meme coin's pump.fun trades over {duration} seconds.
-Give a no-BS take: bullish, bearish, or exit fast. Include:
-1. Entry logic if any
-2. Stop loss range
-3. Take profit zones
-4. Overall risk
+You're a ruthless sniper bot. Analyze this meme coin's pump.fun trades over {duration} seconds.
+Determine if it's bullish, bearish, or just trash. Be blunt and execution-focused.
+Suggest a buy strategy (if any), stop loss range, and take profit range.
 
 Recent Trades:
 {json.dumps(events, indent=2)}
@@ -54,17 +51,16 @@ Recent Trades:
         res = openai.ChatCompletion.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "You're a cracked Solana sniper bot. Be blunt, tactical, and degen. No fluff."},
+                {"role": "system", "content": "You're an elite Solana meme coin analyst. Give blunt, tactical analysis only."},
                 {"role": "user", "content": prompt}
             ],
             max_tokens=300,
             temperature=0.5
         )
-        verdict = res["choices"][0]["message"]["content"]
-        logger.info(f"GPT result: {verdict}")
-
-        wrapped = f"🚨 Degen Verdict on {token} 🚨\n\n{verdict}\n\n📍 ENTRY: Based on volume clusters\n🔪 SL: Set tight if you're soft\n🏁 TP: Lock gains or get dumped on\n🧠 Verdict Duration: {duration}s window"
-        await send_telegram_message(chat_id, wrapped)
+        result = res["choices"][0]["message"]["content"]
+        logger.info(f"GPT result: {result}")
+        await send_telegram_message(chat_id, f"📊 GPT Verdict on {token}:
+{result}")
     except Exception as e:
         logger.error(f"GPT error: {e}")
         await send_telegram_message(chat_id, f"❌ GPT error: {e}")
@@ -74,7 +70,7 @@ async def listen_for_trade(ca, chat_id, duration):
     collected = []
     try:
         logger.info(f"Connecting to Pump.fun WS for {ca}")
-        async with websockets.connect(uri) as ws:
+        async with websockets.connect(uri, ping_interval=20) as ws:
             await ws.send(json.dumps({
                 "method": "subscribeTokenTrade",
                 "keys": [ca]
@@ -106,7 +102,8 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=update.effective_chat.id, text="Usage: /analyze <TOKEN_MINT> [duration_seconds]")
         return
 
-    ca = context.args[0]
+    raw_ca = context.args[0]
+    ca = raw_ca.replace("pump", "")  # Normalize CA
     duration = int(context.args[1]) if len(context.args) > 1 and context.args[1].isdigit() else 30
     chat_id = update.effective_chat.id
 
