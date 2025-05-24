@@ -59,8 +59,7 @@ Recent Trades:
         )
         result = res["choices"][0]["message"]["content"]
         logger.info(f"GPT result: {result}")
-        await send_telegram_message(chat_id, f"📊 GPT Verdict on {token}:
-{result}")
+        await send_telegram_message(chat_id, f"📊 GPT Verdict on {token}:\n{result}")
     except Exception as e:
         logger.error(f"GPT error: {e}")
         await send_telegram_message(chat_id, f"❌ GPT error: {e}")
