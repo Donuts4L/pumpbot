@@ -1,9 +1,8 @@
-import os, json, asyncio, logging, httpx
+import os, json, asyncio, logging, httpx, openai
 from fastapi import FastAPI, Request
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
 import websockets
-from openai import OpenAI, APIStatusError
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 logging.basicConfig(level=logging.INFO)
@@ -16,7 +15,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+openai.api_key = OPENAI_API_KEY
 application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
 @app.middleware("http")
@@ -38,22 +37,10 @@ async def send_telegram_message(chat_id, text):
     except Exception as e:
         logger.error(f"Failed to send Telegram message: {e}")
 
-async def is_token_on_dex(mint: str) -> bool:
-    url = f"https://api.dexscreener.com/latest/dex/tokens/{mint}"
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url)
-            if response.status_code == 200:
-                data = response.json()
-                return bool(data.get("pairs"))
-    except Exception as e:
-        logger.error(f"Dexscreener check failed: {e}")
-    return False
-
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
-async def fetch_gpt_response(prompt, model):
-    res = await client.chat.completions.create(
-        model=model,
+async def fetch_gpt_response(prompt):
+    res = await openai.ChatCompletion.acreate(
+        model="gpt-3.5-turbo",
         messages=[
             {"role": "system", "content": "You're an elite Solana meme coin analyst. Give blunt, tactical analysis only."},
             {"role": "user", "content": prompt}
@@ -74,16 +61,8 @@ Recent Trades:
 {json.dumps(events, indent=2)}
     """
     try:
-        logger.info("Sending prompt to GPT-4o...")
-        result = await fetch_gpt_response(prompt, "gpt-4o")
-    except APIStatusError as e:
-        logger.warning(f"GPT-4o failed with {e}, falling back to GPT-3.5...")
-        try:
-            result = await fetch_gpt_response(prompt, "gpt-3.5-turbo")
-        except Exception as e2:
-            logger.error(f"GPT fallback error: {e2}")
-            await send_telegram_message(chat_id, f"❌ GPT error (fallback): {e2}")
-            return
+        logger.info("Sending prompt to GPT-3.5...")
+        result = await fetch_gpt_response(prompt)
     except Exception as e:
         logger.error(f"GPT error: {e}")
         await send_telegram_message(chat_id, f"❌ GPT error: {e}")
