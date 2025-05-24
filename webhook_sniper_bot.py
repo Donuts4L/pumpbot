@@ -117,7 +117,7 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=chat_id, text="⏳ Already analyzing this token...")
         return
 
-    await context.bot.send_message(chat_id=chat_id, text=f"🛁 Listening for trades on {ca} for {duration}s...")
+    await context.bot.send_message(chat_id=chat_id, text=f"💅 Listening for trades on {ca} for {duration}s...")
     task = asyncio.create_task(listen_for_trade(ca, chat_id, duration))
     active_tasks[ca] = task
 
