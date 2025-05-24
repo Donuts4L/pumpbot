@@ -60,7 +60,7 @@ Suggest a buy strategy (if any), stop loss range, and take profit range.
 
 Recent Trades:
 {json.dumps(events, indent=2)}
-    """
+"""
     try:
         logger.info("Sending prompt to GPT-3.5...")
         result = await fetch_gpt_response(prompt)
@@ -70,7 +70,8 @@ Recent Trades:
         return
 
     logger.info(f"GPT result: {result}")
-    await send_telegram_message(chat_id, f"📊 GPT Verdict on {token}:\n{result}")
+    await send_telegram_message(chat_id, f"📊 GPT Verdict on {token}:
+{result}")
 
 async def listen_for_trade(ca, chat_id, duration):
     uri = "wss://pumpportal.fun/api/data"
