@@ -1,6 +1,6 @@
 fastapi
-uvicorn
-python-telegram-bot==20.7
-openai
 httpx
+python-telegram-bot==20.7
 websockets
+openai>=1.0.0
+uvicorn
