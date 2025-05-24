@@ -1,0 +1,6 @@
+openai
+websockets
+requests
+python-telegram-bot==20.7
+fastapi
+uvicorn
