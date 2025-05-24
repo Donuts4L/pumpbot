@@ -1,4 +1,3 @@
-
 import asyncio, websockets, json, openai, requests, os
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
@@ -38,10 +37,7 @@ Event:
             temperature=0.4
         )
         result = res["choices"][0]["message"]["content"]
-       send_telegram_message(chat_id, f"📊 GPT Verdict on {token}...\n\n{result}")
-
-
-{result}")
+        send_telegram_message(chat_id, f"📊 GPT Verdict on {token}...\n\n{result}")
     except Exception as e:
         send_telegram_message(chat_id, f"❌ GPT error: {e}")
 
