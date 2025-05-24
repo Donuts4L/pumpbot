@@ -36,6 +36,18 @@ async def send_telegram_message(chat_id, text):
     except Exception as e:
         logger.error(f"Failed to send Telegram message: {e}")
 
+async def is_token_on_dex(mint: str) -> bool:
+    url = f"https://api.dexscreener.com/latest/dex/tokens/{mint}"
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url)
+            if response.status_code == 200:
+                data = response.json()
+                return bool(data.get("pairs"))
+    except Exception as e:
+        logger.error(f"Dexscreener check failed: {e}")
+    return False
+
 async def analyze_with_gpt(events, chat_id, duration):
     token = events[0]['params'].get('mint', 'UNKNOWN')[:6]
     prompt = f"""
@@ -65,11 +77,15 @@ Recent Trades:
         await send_telegram_message(chat_id, f"❌ GPT error: {e}")
 
 async def listen_for_trade(ca, chat_id, duration):
+    if await is_token_on_dex(ca):
+        await send_telegram_message(chat_id, f"⚠️ Token {ca} has migrated to a DEX. Trades may not be visible on Pump.fun.")
+        return
+
     uri = "wss://pumpportal.fun/api/data"
     collected = []
     try:
         logger.info(f"Connecting to Pump.fun WS for {ca}")
-        async with websockets.connect(uri, ping_interval=20) as ws:
+        async with websockets.connect(uri) as ws:
             await ws.send(json.dumps({
                 "method": "subscribeTokenTrade",
                 "keys": [ca]
@@ -80,8 +96,8 @@ async def listen_for_trade(ca, chat_id, duration):
                 try:
                     msg = await asyncio.wait_for(ws.recv(), timeout=end_time - asyncio.get_event_loop().time())
                     data = json.loads(msg)
+                    logger.info(f"WS ▶ {data}")
                     if data.get("method") == "tokenTrade" and data['params']['mint'] == ca:
-                        logger.info(f"Captured trade: {data}")
                         collected.append(data)
                 except asyncio.TimeoutError:
                     break
@@ -101,8 +117,7 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=update.effective_chat.id, text="Usage: /analyze <TOKEN_MINT> [duration_seconds]")
         return
 
-    raw_ca = context.args[0]
-    ca = raw_ca.replace("pump", "")  # Normalize CA
+    ca = context.args[0]
     duration = int(context.args[1]) if len(context.args) > 1 and context.args[1].isdigit() else 30
     chat_id = update.effective_chat.id
 
