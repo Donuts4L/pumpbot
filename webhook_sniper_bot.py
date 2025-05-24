@@ -1,9 +1,10 @@
-import os, json, asyncio, logging, httpx, openai
+import os, json, asyncio, logging, httpx
 from fastapi import FastAPI, Request
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
 import websockets
 from tenacity import retry, stop_after_attempt, wait_fixed
+from openai import AsyncOpenAI
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -15,7 +16,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
-openai.api_key = OPENAI_API_KEY
+client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
 @app.middleware("http")
@@ -39,7 +40,7 @@ async def send_telegram_message(chat_id, text):
 
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 async def fetch_gpt_response(prompt):
-    res = await openai.ChatCompletion.acreate(
+    response = await client.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[
             {"role": "system", "content": "You're an elite Solana meme coin analyst. Give blunt, tactical analysis only."},
@@ -48,7 +49,7 @@ async def fetch_gpt_response(prompt):
         max_tokens=300,
         temperature=0.5
     )
-    return res.choices[0].message.content
+    return response.choices[0].message.content
 
 async def analyze_with_gpt(events, chat_id, duration):
     token = events[0].get('mint', 'UNKNOWN')[:6]
@@ -69,8 +70,8 @@ Recent Trades:
         return
 
     logger.info(f"GPT result: {result}")
-    await send_telegram_message(chat_id, f"📊 GPT Verdict on {token}:\n{result}")
-
+    await send_telegram_message(chat_id, f"📊 GPT Verdict on {token}:
+{result}")
 
 async def listen_for_trade(ca, chat_id, duration):
     uri = "wss://pumpportal.fun/api/data"
