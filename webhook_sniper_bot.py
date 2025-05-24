@@ -69,8 +69,8 @@ Recent Trades:
         return
 
     logger.info(f"GPT result: {result}")
-    await send_telegram_message(chat_id, f"📊 GPT Verdict on {token}:
-{result}")
+    await send_telegram_message(chat_id, f"📊 GPT Verdict on {token}:\n{result}")
+
 
 async def listen_for_trade(ca, chat_id, duration):
     uri = "wss://pumpportal.fun/api/data"
