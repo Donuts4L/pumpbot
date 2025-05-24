@@ -3,7 +3,7 @@ services:
     name: pumpbot
     runtime: python
     buildCommand: "pip install -r requirements.txt"
-    startCommand: "python pump_sniper.py"
+    startCommand: "python webhook_sniper_bot.py"
     envVars:
       - key: OPENAI_API_KEY
         sync: false
