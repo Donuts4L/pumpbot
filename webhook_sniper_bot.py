@@ -90,10 +90,16 @@ async def listen_for_trade(ca, chat_id, duration):
                     msg = await asyncio.wait_for(ws.recv(), timeout=end_time - asyncio.get_event_loop().time())
                     data = json.loads(msg)
                     logger.info(f"WS ▶ {data}")
-                    if data.get("txType") in ("buy", "sell") and data.get("mint") == ca:
+                    # Relaxed filtering logic
+                    if (
+                        isinstance(data, dict)
+                        and data.get("txType") in ("buy", "sell")
+                        and ca in (data.get("mint"), data.get("params", {}).get("mint"))
+                    ):
                         collected.append(data)
                 except asyncio.TimeoutError:
                     break
+        logger.info(f"Collected {len(collected)} trades for {ca}")
         if collected:
             await analyze_with_gpt(collected, chat_id, duration)
         else:
