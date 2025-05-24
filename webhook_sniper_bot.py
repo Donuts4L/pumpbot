@@ -71,8 +71,7 @@ Recent Trades:
         )
         result = res["choices"][0]["message"]["content"]
         logger.info(f"GPT result: {result}")
-        await send_telegram_message(chat_id, f"📊 GPT Verdict on {token}:
-{result}")
+        await send_telegram_message(chat_id, f"\U0001F4CA GPT Verdict on {token}:\n{result}")
     except Exception as e:
         logger.error(f"GPT error: {e}")
         await send_telegram_message(chat_id, f"❌ GPT error: {e}")
@@ -122,7 +121,7 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=chat_id, text="⏳ Already analyzing this token...")
         return
 
-    await context.bot.send_message(chat_id=chat_id, text=f"📡 Listening for trades on {ca} for {duration}s...")
+    await context.bot.send_message(chat_id=chat_id, text=f"🛁 Listening for trades on {ca} for {duration}s...")
     task = asyncio.create_task(listen_for_trade(ca, chat_id, duration))
     active_tasks[ca] = task
 
@@ -141,4 +140,3 @@ async def telegram_webhook(req: Request):
     update = Update.de_json(data, application.bot)
     await application.process_update(update)
     return "ok"
-
