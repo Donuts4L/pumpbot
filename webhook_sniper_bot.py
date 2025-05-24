@@ -3,7 +3,8 @@ from fastapi import FastAPI, Request
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
 import websockets
-from openai import OpenAI
+from openai import OpenAI, APIStatusError
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -49,6 +50,19 @@ async def is_token_on_dex(mint: str) -> bool:
         logger.error(f"Dexscreener check failed: {e}")
     return False
 
+@retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
+async def fetch_gpt_response(prompt, model):
+    res = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": "You're an elite Solana meme coin analyst. Give blunt, tactical analysis only."},
+            {"role": "user", "content": prompt}
+        ],
+        max_tokens=300,
+        temperature=0.5
+    )
+    return res.choices[0].message.content
+
 async def analyze_with_gpt(events, chat_id, duration):
     token = events[0].get('mint', 'UNKNOWN')[:6]
     prompt = f"""
@@ -60,22 +74,24 @@ Recent Trades:
 {json.dumps(events, indent=2)}
     """
     try:
-        logger.info("Sending prompt to GPT...")
-        res = await client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "You're an elite Solana meme coin analyst. Give blunt, tactical analysis only."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=300,
-            temperature=0.5
-        )
-        result = res.choices[0].message.content
-        logger.info(f"GPT result: {result}")
-        await send_telegram_message(chat_id, f"📊 GPT Verdict on {token}:\n{result}")
+        logger.info("Sending prompt to GPT-4o...")
+        result = await fetch_gpt_response(prompt, "gpt-4o")
+    except APIStatusError as e:
+        logger.warning(f"GPT-4o failed with {e}, falling back to GPT-3.5...")
+        try:
+            result = await fetch_gpt_response(prompt, "gpt-3.5-turbo")
+        except Exception as e2:
+            logger.error(f"GPT fallback error: {e2}")
+            await send_telegram_message(chat_id, f"❌ GPT error (fallback): {e2}")
+            return
     except Exception as e:
         logger.error(f"GPT error: {e}")
         await send_telegram_message(chat_id, f"❌ GPT error: {e}")
+        return
+
+    logger.info(f"GPT result: {result}")
+    await send_telegram_message(chat_id, f"📊 GPT Verdict on {token}:
+{result}")
 
 async def listen_for_trade(ca, chat_id, duration):
     uri = "wss://pumpportal.fun/api/data"
