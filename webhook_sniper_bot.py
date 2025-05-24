@@ -70,8 +70,7 @@ Recent Trades:
         return
 
     logger.info(f"GPT result: {result}")
-    await send_telegram_message(chat_id, f"📊 GPT Verdict on {token}:
-{result}")
+    await send_telegram_message(chat_id, f"📊 GPT Verdict on {token}:\n{result}")
 
 async def listen_for_trade(ca, chat_id, duration):
     uri = "wss://pumpportal.fun/api/data"
@@ -97,7 +96,7 @@ async def listen_for_trade(ca, chat_id, duration):
         if collected:
             await analyze_with_gpt(collected, chat_id, duration)
         else:
-            await send_telegram_message(chat_id, f"🤷 No trades detected on {ca} during the {duration}s window.")
+            await send_telegram_message(chat_id, f"🧗 No trades detected on {ca} during the {duration}s window.")
     except Exception as e:
         logger.error(f"WebSocket error for {ca}: {e}")
         await send_telegram_message(chat_id, f"❌ WebSocket error for {ca}: {e}")
