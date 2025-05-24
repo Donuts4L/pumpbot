@@ -71,16 +71,13 @@ Recent Trades:
         )
         result = res["choices"][0]["message"]["content"]
         logger.info(f"GPT result: {result}")
-        await send_telegram_message(chat_id, f"📊 GPT Verdict on {token}:\n{result}")
+        await send_telegram_message(chat_id, f"📊 GPT Verdict on {token}:
+{result}")
     except Exception as e:
         logger.error(f"GPT error: {e}")
         await send_telegram_message(chat_id, f"❌ GPT error: {e}")
 
 async def listen_for_trade(ca, chat_id, duration):
-    if await is_token_on_dex(ca):
-        await send_telegram_message(chat_id, f"⚠️ Token {ca} has migrated to a DEX. Trades may not be visible on Pump.fun.")
-        return
-
     uri = "wss://pumpportal.fun/api/data"
     collected = []
     try:
