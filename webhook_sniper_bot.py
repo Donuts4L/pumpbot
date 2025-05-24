@@ -39,9 +39,12 @@ async def send_telegram_message(chat_id, text):
 async def analyze_with_gpt(events, chat_id, duration):
     token = events[0]['params'].get('mint', 'UNKNOWN')[:6]
     prompt = f"""
-You're a ruthless sniper bot. Analyze this meme coin's pump.fun trades over {duration} seconds.
-Determine if it's bullish, bearish, or just trash. Be blunt and execution-focused.
-Suggest a buy strategy (if any), stop loss range, and take profit range.
+You're a ruthless degen sniper. Analyze this meme coin's pump.fun trades over {duration} seconds.
+Give a no-BS take: bullish, bearish, or exit fast. Include:
+1. Entry logic if any
+2. Stop loss range
+3. Take profit zones
+4. Overall risk
 
 Recent Trades:
 {json.dumps(events, indent=2)}
@@ -51,16 +54,17 @@ Recent Trades:
         res = openai.ChatCompletion.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": "You're an elite Solana meme coin analyst. Give blunt, tactical analysis only."},
+                {"role": "system", "content": "You're a cracked Solana sniper bot. Be blunt, tactical, and degen. No fluff."},
                 {"role": "user", "content": prompt}
             ],
             max_tokens=300,
             temperature=0.5
         )
-        result = res["choices"][0]["message"]["content"]
-        logger.info(f"GPT result: {result}")
-        await send_telegram_message(chat_id, f"📊 GPT Verdict on {token}:
-\n{result}")
+        verdict = res["choices"][0]["message"]["content"]
+        logger.info(f"GPT result: {verdict}")
+
+        wrapped = f"🚨 Degen Verdict on {token} 🚨\n\n{verdict}\n\n📍 ENTRY: Based on volume clusters\n🔪 SL: Set tight if you're soft\n🏁 TP: Lock gains or get dumped on\n🧠 Verdict Duration: {duration}s window"
+        await send_telegram_message(chat_id, wrapped)
     except Exception as e:
         logger.error(f"GPT error: {e}")
         await send_telegram_message(chat_id, f"❌ GPT error: {e}")
