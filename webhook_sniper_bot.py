@@ -49,7 +49,7 @@ async def is_token_on_dex(mint: str) -> bool:
     return False
 
 async def analyze_with_gpt(events, chat_id, duration):
-    token = events[0]['params'].get('mint', 'UNKNOWN')[:6]
+    token = events[0].get('mint', 'UNKNOWN')[:6]
     prompt = f"""
 You're a ruthless sniper bot. Analyze this meme coin's pump.fun trades over {duration} seconds.
 Determine if it's bullish, bearish, or just trash. Be blunt and execution-focused.
@@ -71,7 +71,8 @@ Recent Trades:
         )
         result = res["choices"][0]["message"]["content"]
         logger.info(f"GPT result: {result}")
-        await send_telegram_message(chat_id, f"\U0001F4CA GPT Verdict on {token}:\n{result}")
+        await send_telegram_message(chat_id, f"\U0001F4CA GPT Verdict on {token}:
+{result}")
     except Exception as e:
         logger.error(f"GPT error: {e}")
         await send_telegram_message(chat_id, f"❌ GPT error: {e}")
@@ -93,7 +94,7 @@ async def listen_for_trade(ca, chat_id, duration):
                     msg = await asyncio.wait_for(ws.recv(), timeout=end_time - asyncio.get_event_loop().time())
                     data = json.loads(msg)
                     logger.info(f"WS ▶ {data}")
-                    if data.get("method") == "tokenTrade" and data['params']['mint'] == ca:
+                    if data.get("txType") in ("buy", "sell") and data.get("mint") == ca:
                         collected.append(data)
                 except asyncio.TimeoutError:
                     break
