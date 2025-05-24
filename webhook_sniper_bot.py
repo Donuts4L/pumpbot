@@ -2,7 +2,6 @@ import os, json, openai, requests, asyncio
 from fastapi import FastAPI, Request
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
-from telegram.ext import WebhookHandler
 import websockets
 
 app = FastAPI()
@@ -42,10 +41,7 @@ Event:
             temperature=0.4
         )
         result = res["choices"][0]["message"]["content"]
-        send_telegram_message(chat_id, f"📊 GPT Verdict on {token}:
-
-{result}")
-
+        send_telegram_message(chat_id, f"📊 GPT Verdict on {token}:\n\n{result}")
     except Exception as e:
         send_telegram_message(chat_id, f"❌ GPT error: {e}")
 
