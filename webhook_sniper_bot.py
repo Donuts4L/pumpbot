@@ -1,8 +1,9 @@
-import os, json, openai, asyncio, logging, httpx
+import os, json, asyncio, logging, httpx
 from fastapi import FastAPI, Request
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
 import websockets
+from openai import OpenAI
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -14,7 +15,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
-openai.api_key = OPENAI_API_KEY
+client = OpenAI(api_key=OPENAI_API_KEY)
 application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
 @app.middleware("http")
@@ -60,7 +61,7 @@ Recent Trades:
     """
     try:
         logger.info("Sending prompt to GPT...")
-        res = openai.ChatCompletion.create(
+        res = await client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": "You're an elite Solana meme coin analyst. Give blunt, tactical analysis only."},
@@ -69,7 +70,7 @@ Recent Trades:
             max_tokens=300,
             temperature=0.5
         )
-        result = res["choices"][0]["message"]["content"]
+        result = res.choices[0].message.content
         logger.info(f"GPT result: {result}")
         await send_telegram_message(chat_id, f"📊 GPT Verdict on {token}:\n{result}")
     except Exception as e:
