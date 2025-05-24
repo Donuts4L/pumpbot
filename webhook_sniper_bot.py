@@ -56,9 +56,7 @@ Event:
             temperature=0.4
         )
         result = res["choices"][0]["message"]["content"]
-        send_telegram_message(chat_id, f"📊 GPT Verdict on {token}:
-
-{result}")
+        send_telegram_message(chat_id, f"📊 GPT Verdict on {token}:\n\n{result}")
     except Exception as e:
         send_telegram_message(chat_id, f"❌ GPT error: {e}")
 
