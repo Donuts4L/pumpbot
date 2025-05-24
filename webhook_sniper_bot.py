@@ -5,10 +5,12 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
 
 import websockets
+import logging
 
-# Logging setup
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
 
 app = FastAPI()
 active_tasks = {}
@@ -46,6 +48,7 @@ Event:
 {json.dumps(event, indent=2)}
     """
     try:
+        logger.info("Sending prompt to GPT...")
         res = openai.ChatCompletion.create(
             model="gpt-4o",
             messages=[
@@ -56,27 +59,35 @@ Event:
             temperature=0.4
         )
         result = res["choices"][0]["message"]["content"]
+        logger.info(f"GPT result: {result}")
         send_telegram_message(chat_id, f"📊 GPT Verdict on {token}:\n\n{result}")
     except Exception as e:
+        logger.error(f"GPT error: {e}")
         send_telegram_message(chat_id, f"❌ GPT error: {e}")
 
 async def listen_for_trade(ca, chat_id):
     uri = "wss://pumpportal.fun/api/data"
     try:
+        logger.info(f"Connecting to Pump.fun WS for {ca}")
         async with websockets.connect(uri) as ws:
             await ws.send(json.dumps({
                 "method": "subscribeTokenTrade",
                 "keys": [ca]
             }))
+            logger.info(f"Subscribed to {ca}")
             async for msg in ws:
+                logger.info(f"Received WS msg: {msg}")
                 data = json.loads(msg)
                 if data.get("method") == "tokenTrade" and data['params']['mint'] == ca:
+                    logger.info(f"Matched tokenTrade for {ca}")
                     await analyze_with_gpt(data, chat_id)
                     break
     except Exception as e:
+        logger.error(f"WebSocket error for {ca}: {e}")
         send_telegram_message(chat_id, f"❌ WebSocket error for {ca}: {e}")
     finally:
         active_tasks.pop(ca, None)
+
 
 async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Received command from user {update.effective_user.id}")
