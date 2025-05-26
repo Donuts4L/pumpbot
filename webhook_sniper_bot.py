@@ -59,6 +59,29 @@ async def log_requests(request: Request, call_next):
     logger.info(f"→ {request.method} {request.url}")
     return await call_next(request)
 
+@app.on_event("startup")
+async def startup_tasks():
+    logger.info("Starting application initialization")
+    try:
+        await application.initialize()
+        await application.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
+        logger.info("Telegram bot initialized and webhook set")
+    except Exception as e:
+        logger.critical(f"Failed to initialize Telegram application: {type(e).__name__}: {str(e)}")
+        raise
+
+    try:
+        test_response = await client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": "Test"}],
+            max_tokens=10
+        )
+        logger.info("OpenAI API key validated successfully")
+    except Exception as e:
+        logger.error(f"OpenAI API key validation failed: {type(e).__name__}: {str(e)}")
+
+    logger.info("Application startup complete")
+
 @app.on_event("shutdown")
 async def shutdown():
     await http_client.aclose()
@@ -85,6 +108,20 @@ async def test_ws(ca: str):
             return {"status": "success", "message": msg}
     except Exception as e:
         logger.error(f"WebSocket test failed: {type(e).__name__}: {str(e)}")
+        return {"status": "error", "message": f"{type(e).__name__}: {str(e)}"}
+
+@app.get("/test-openai")
+async def test_openai():
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": "Test"}],
+            max_tokens=10
+        )
+        logger.info("OpenAI test successful")
+        return {"status": "success", "response": response.choices[0].message.content}
+    except Exception as e:
+        logger.error(f"OpenAI test failed: {type(e).__name__}: {str(e)}")
         return {"status": "error", "message": f"{type(e).__name__}: {str(e)}"}
 
 async def send_telegram_message(chat_id, text):
