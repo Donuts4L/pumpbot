@@ -10,96 +10,106 @@ import websockets
 from websockets.exceptions import ConnectionClosedError, InvalidURI, WebSocketException
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 from openai import AsyncOpenAI, APIStatusError, RateLimitError, APIConnectionError, AuthenticationError
+from typing import List, Dict, Any
+from cachetools import TTLCache
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# –– Environment & Config ––
+# Environment validation
+required_envs = ["TELEGRAM_BOT_TOKEN", "OPENAI_API_KEY", "WEBHOOK_URL"]
+missing = [env for env in required_envs if not os.getenv(env)]
+if missing:
+    logger.critical(f"Missing environment variables: {', '.join(missing)}")
+    raise ValueError("Required environment variables are missing")
+
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 BAIL_ON_ZERO_TRADES = os.getenv("BAIL_ON_ZERO_TRADES", "0") == "1"
 
-# –– FastAPI & Telegram setup ––
+if not OPENAI_API_KEY.startswith("sk-"):
+    logger.critical("Invalid OPENAI_API_KEY format")
+    raise ValueError("OPENAI_API_KEY must start with 'sk-'")
+
 app = FastAPI()
 application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-# –– Concurrency & State ––
-active_tasks = {}                          # token → asyncio.Task
-listen_sema = asyncio.Semaphore(5)         # max 5 concurrent WS → Pump.fun
-command_debounce = {}                      # "user-token" → expire_time (monotonic)
+active_tasks = {}
+listen_sema = asyncio.Semaphore(5)
+command_debounce = TTLCache(maxsize=1000, ttl=5)
+http_client = httpx.AsyncClient()
 
-# –– System prompt enforcing 5-field format ––
 SYSTEM_PROMPT = '''
 ANALYSIS PROTOCOL:
-1. Use EXACTLY these 5 fields:
-   Verdict: [Bullish/Bearish/Neutral/Trash]
-   Confidence: [1-5]
-   Strategy: [Action or "Monitor"]
-   Stop Loss: [Range/N/A]
-   Take Profit: [Range/N/A]
-2. If format can't be followed, respond with "FORMAT ERROR"
+Use EXACTLY these 5 fields:
+Verdict: [Bullish/Bearish/Neutral/Trash]
+Confidence: [1-5]
+Strategy: [Action or "Monitor"]
+Stop Loss: [Range/N/A]
+Take Profit: [Range/N/A]
+Wrap analysis in a savage degen tone. You're a ruthless Solana meme sniper.
+If format can't be followed, respond with "FORMAT ERROR"
 '''
 
-# –– OpenAI client ––
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
-# –– Middleware to log incoming HTTP requests ––
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     logger.info(f"→ {request.method} {request.url}")
     return await call_next(request)
 
+@app.on_event("shutdown")
+async def shutdown():
+    await http_client.aclose()
+    for task in active_tasks.values():
+        task.cancel()
+    logger.info("Application shutdown complete")
+
 @app.get("/")
 async def root():
     return "OK"
 
-# –– Helper: send a Telegram message ––
+@app.get("/test-websocket/{ca}")
+async def test_ws(ca: str):
+    uri = "wss://pumpportal.fun/api/data"
+    try:
+        async with websockets.connect(uri) as ws:
+            logger.info(f"WebSocket connected for test with CA: {ca}")
+            await ws.send(json.dumps({
+                "method": "subscribeTokenTrade",
+                "keys": [ca]
+            }))
+            msg = await asyncio.wait_for(ws.recv(), timeout=5)
+            logger.info(f"WebSocket message received: {msg}")
+            return {"status": "success", "message": msg}
+    except Exception as e:
+        logger.error(f"WebSocket test failed: {type(e).__name__}: {str(e)}")
+        return {"status": "error", "message": f"{type(e).__name__}: {str(e)}"}
+
 async def send_telegram_message(chat_id, text):
     try:
-        async with httpx.AsyncClient() as hc:
-            await hc.post(
-                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-                json={"chat_id": chat_id, "text": text}
-            )
+        await http_client.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            json={"chat_id": chat_id, "text": text}
+        )
     except Exception as e:
         logger.error(f"Failed to send Telegram message: {e}")
 
-# –– Background task: prune old debounce entries ––
-async def clean_debounce_cache():
-    while True:
-        await asyncio.sleep(60)
-        now = asyncio.get_event_loop().time()
-        expired = [k for k,v in command_debounce.items() if v < now]
-        for k in expired:
-            del command_debounce[k]
-        if expired:
-            logger.info(f"Cleaned {len(expired)} debounce entries")
+@retry(stop=stop_after_attempt(2), wait=wait_fixed(1))
+async def fetch_metadata(mint: str) -> dict:
+    res = await http_client.get(f"https://pump.fun/api/token/{mint}")
+    res.raise_for_status()
+    return res.json()
 
-# –– Startup: launch cache cleanup & webhook ––
-@app.on_event("startup")
-async def startup_tasks():
-    asyncio.create_task(clean_debounce_cache())
-    await application.initialize()
-    await application.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
-    logger.info("Telegram webhook set and application initialized.")
-
-# –– Fetch GPT response with model-fallback & streaming ––
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_fixed(2),
-    retry=retry_if_exception_type((RateLimitError, APIConnectionError)),
-    reraise=True
-)
-async def fetch_gpt_response(prompt, models=("gpt-4-turbo", "gpt-3.5-turbo")):
-    last_exc = None
+async def fetch_gpt_response(prompt: str, models=("gpt-4-turbo", "gpt-3.5-turbo")) -> str:
     for model in models:
         try:
             stream = await client.chat.completions.create(
                 model=model,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": f"⚠️ Stick to 5-field format!\n\n{prompt}"}
+                    {"role": "user", "content": f" Stick to 5-field format!\n\n{prompt}"}
                 ],
                 max_tokens=300,
                 temperature=0.7,
@@ -110,66 +120,46 @@ async def fetch_gpt_response(prompt, models=("gpt-4-turbo", "gpt-3.5-turbo")):
                 delta = chunk.choices[0].delta.content
                 if delta:
                     content.append(delta)
-            result = "".join(content).strip()
             logger.info(f"Used model: {model}")
-            return result
-
-        except RateLimitError as e:
-            logger.warning(f"{model} rate-limited, trying next model…")
-            last_exc = e
+            return "".join(content).strip()
+        except (RateLimitError, APIConnectionError, APIStatusError, AuthenticationError) as e:
+            logger.warning(f"{model} error: {type(e).__name__}: {e}")
             continue
+    raise RuntimeError("All GPT model attempts failed")
 
-        except APIStatusError as e:
-            logger.error(f"APIStatusError on {model}: {e.code} – {e.message}")
-            last_exc = e
-            continue
-
-        except AuthenticationError:
-            logger.critical("OpenAI authentication failed – check API key")
-            raise
-
+async def analyze_with_gpt(events: List[Dict[str, Any]], chat_id: int, duration: int) -> None:
+    token_meta = {}
+    if events:
+        try:
+            token_meta = await fetch_metadata(events[0].get("mint"))
+            token_meta['ageMinutes'] = round((asyncio.get_event_loop().time() - token_meta.get('createdUnixTimestamp', 0)) / 60)
         except Exception as e:
-            logger.error(f"Unexpected error with {model}: {e}")
-            last_exc = e
-            break
-
-    raise last_exc or RuntimeError("All OpenAI model attempts failed")
-
-# –– Core analysis ––
-async def analyze_with_gpt(events, chat_id, duration):
-    # Bail early if zero trades and configured to do so
-    if not events and BAIL_ON_ZERO_TRADES:
-        await send_telegram_message(chat_id, "🎗 No trades detected – market's asleep.")
-        return
+            logger.warning(f"Token metadata fetch failed: {e}")
 
     token = (events[0].get("mint", "UNKNOWN")[:6] if events else "UNKNOWN")
     low_note = "\n⚠️ LOW ACTIVITY – Analyzing micro-patterns" if 0 < len(events) < 3 else ""
 
     prompt = (
-        f"Analyze {len(events)} trades over {duration}s for {token}:{low_note}\n\n"
+        f"Yo sniper — scoped {len(events)} trades in {duration}s on {token} "
+        f"(MC: ${token_meta.get('marketCap', 'N/A')}, Age: {token_meta.get('ageMinutes', 'N/A')}m). Let's dissect:{low_note}\n\n"
         "Data:\n"
         f"{json.dumps(events, indent=2) if events else 'No trades – market stagnant'}"
     )
 
     try:
         result = await fetch_gpt_response(prompt)
-    except AuthenticationError:
-        await send_telegram_message(chat_id, "❌ OpenAI authentication error")
-        return
-    except RateLimitError:
-        await send_telegram_message(chat_id, "🚧 OpenAI quota exceeded, try later")
-        return
     except Exception as e:
-        await send_telegram_message(chat_id, f"❌ Analysis failed: {type(e).__name__}")
-        logger.error(f"fetch_gpt_response error: {e}")
+        logger.error(f"GPT call failed: {e}")
+        await send_telegram_message(chat_id, f"❌ GPT call failed: {type(e).__name__}")
         return
 
-    await send_telegram_message(chat_id, f"\U0001F4CA {token} Analysis:\n{result}")
+    await send_telegram_message(chat_id, f"🚀 {token} Degen Verdict:\n{result}")
 
-# –– Listen & collect trades from Pump.fun WS ––
-async def listen_for_trade(ca, chat_id, duration):
+async def listen_for_trade(ca: str, chat_id: int, duration: int) -> None:
     collected = []
     uri = "wss://pumpportal.fun/api/data"
+    timeout_count = 0
+    max_timeouts = 10
     try:
         async with listen_sema:
             async with websockets.connect(uri) as ws:
@@ -184,53 +174,58 @@ async def listen_for_trade(ca, chat_id, duration):
                         break
                     try:
                         msg = await asyncio.wait_for(ws.recv(), timeout=min(rem, 5))
+                        timeout_count = 0
+                        try:
+                            data = json.loads(msg)
+                            if data.get("method") == "tokenTrade" and "params" in data:
+                                p = data["params"]
+                                if p.get("mint") == ca and p.get("txType") in ("buy", "sell"):
+                                    collected.append({
+                                        "ts": p.get("ts"),
+                                        "type": p.get("txType"),
+                                        "amount": p.get("amount"),
+                                        "price": p.get("price")
+                                    })
+                        except json.JSONDecodeError:
+                            logger.warning(f"Invalid JSON from WebSocket: {msg}")
                     except asyncio.TimeoutError:
+                        timeout_count += 1
+                        if timeout_count >= max_timeouts:
+                            logger.warning("Max WebSocket timeouts reached")
+                            break
                         continue
-
-                    data = json.loads(msg)
-                    if data.get("method") == "tokenTrade" and "params" in data:
-                        p = data["params"]
-                        if p.get("mint") == ca and p.get("txType") in ("buy", "sell"):
-                            collected.append({
-                                "ts":   p.get("ts"),
-                                "type": p.get("txType"),
-                                "amount": p.get("amount"),
-                                "price":  p.get("price")
-                            })
-
     except (ConnectionClosedError, InvalidURI, WebSocketException) as e:
-        logger.error(f"WS error ({type(e).__name__}): {e}")
+        logger.error(f"WebSocket error ({type(e).__name__}): {e}")
         await send_telegram_message(chat_id, f"🔌 WebSocket issue: {type(e).__name__}")
     except Exception as e:
         logger.error(f"Unexpected WS error: {e}")
         await send_telegram_message(chat_id, "❌ Analysis failed")
     finally:
         active_tasks.pop(ca, None)
+        await analyze_with_gpt(collected, chat_id, duration)
 
-    if not collected:
-        if not BAIL_ON_ZERO_TRADES:
-            await send_telegram_message(chat_id, f"🎗 No trades for {ca} in {duration}s")
-        return
-
-    logger.info(f"Collected {len(collected)} trades; sample keys: {collected[0].keys()}")
-    await analyze_with_gpt(collected, chat_id, duration)
-
-# –– /analyze command handler ––
 async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Usage: /analyze <TOKEN_MINT> [duration_seconds]")
         return
 
     ca = context.args[0]
-    duration = int(context.args[1]) if len(context.args) > 1 and context.args[1].isdigit() else 30
-    chat_id = update.effective_chat.id
+    if not ca or len(ca) < 6:
+        await update.message.reply_text("Invalid TOKEN_MINT")
+        return
 
-    # Debounce using monotonic clock
+    duration = int(context.args[1]) if len(context.args) > 1 and context.args[1].isdigit() else 30
+    if duration <= 0:
+        await update.message.reply_text("Duration must be a positive number")
+        return
+
+    chat_id = update.effective_chat.id
     now = asyncio.get_event_loop().time()
     key = f"{update.effective_user.id}-{ca}"
     if command_debounce.get(key, 0) > now:
         await update.message.reply_text(f"⏳ Wait 5s between {ca} analyses")
         return
+
     command_debounce[key] = now + 5
 
     if ca in active_tasks:
@@ -243,7 +238,6 @@ async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 application.add_handler(CommandHandler("analyze", analyze_command))
 
-# –– Telegram webhook endpoint ––
 @app.post("/webhook")
 async def telegram_webhook(req: Request):
     data = await req.json()
