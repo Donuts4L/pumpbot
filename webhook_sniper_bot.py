@@ -64,6 +64,7 @@ async def startup_tasks():
     logger.info("Starting application initialization")
     try:
         await application.initialize()
+        await application.bot.delete_webhook()
         await application.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
         logger.info("Telegram bot initialized and webhook set")
     except Exception as e:
