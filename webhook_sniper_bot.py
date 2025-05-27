@@ -62,7 +62,7 @@ Strategy: Accumulate before breakout
 Stop Loss: 0.002-0.003
 Take Profit: 0.006-0.008
 
-Do not include extra commentary. Just the 5 lines in that order.
+Do not include extra commentary. Do NOT wrap your answer in markdown or code fences. Just the 5 lines in that order.
 """
 
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
@@ -205,7 +205,7 @@ Take Profit: N/A
         trades_json = json.dumps(slim_trades, indent=2)
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Recent Trades:\n```json\n{trades_json}\n```"}
+            {"role": "user", "content": f"Recent Trades:\n{trades_json}"}
         ]
 
         try:
@@ -213,6 +213,7 @@ Take Profit: N/A
             reply = response.choices[0].message.content.strip()
             logger.info(f"Raw GPT Response: {reply}")
 
+            reply = reply.strip("`").strip()
             lines = [line.strip().lower() for line in reply.split("\n") if line.strip()]
             expected_fields = ["verdict:", "confidence:", "strategy:", "stop loss:", "take profit:"]
             if not (len(lines) == 5 and all(lines[i].startswith(expected_fields[i]) for i in range(5))):
