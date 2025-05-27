@@ -158,10 +158,7 @@ async def listen_for_trade(ca: str, chat_id: int, duration: int):
 
     del active_tasks[ca]
 
-    if BAIL_ON_ZERO_TRADES and not events:
-        return
-
-    trades_json = json.dumps(events[-10:], indent=2) if events else "No trades captured."
+    trades_json = json.dumps(events[-10:], indent=2) if events else "{}"
     prompt = SYSTEM_PROMPT + f"\nRecent Trades:\n{trades_json}"
 
     try:
