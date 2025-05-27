@@ -132,4 +132,36 @@ async def telegram_webhook(request: Request):
     await application.process_update(update)
     return "ok"
 
-application.add_handler(CommandHandler("analyze", lambda update, context: update.message.reply_text("Bot is online. Analysis command placeholder.")))
+async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Usage: /analyze <TOKEN_MINT> [duration_seconds]")
+        return
+
+    ca = context.args[0]
+    if not ca or len(ca) < 6:
+        await update.message.reply_text("Invalid TOKEN_MINT")
+        return
+
+    duration = int(context.args[1]) if len(context.args) > 1 and context.args[1].isdigit() else 30
+    if duration <= 0:
+        await update.message.reply_text("Duration must be a positive number")
+        return
+
+    chat_id = update.effective_chat.id
+    now = asyncio.get_event_loop().time()
+    key = f"{update.effective_user.id}-{ca}"
+    if command_debounce.get(key, 0) > now:
+        await update.message.reply_text(f"⏳ Wait 5s between {ca} analyses")
+        return
+
+    command_debounce[key] = now + 5
+
+    if ca in active_tasks:
+        await update.message.reply_text("⏳ Already analyzing this token…")
+        return
+
+    await update.message.reply_text(f"💅 Listening for trades on {ca} for {duration}s…")
+    task = asyncio.create_task(listen_for_trade(ca, chat_id, duration))
+    active_tasks[ca] = task
+
+application.add_handler(CommandHandler("analyze", analyze_command))
