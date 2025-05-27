@@ -132,6 +132,50 @@ async def telegram_webhook(request: Request):
     await application.process_update(update)
     return "ok"
 
+async def listen_for_trade(ca: str, chat_id: int, duration: int):
+    uri = "wss://pumpportal.fun/api/data"
+    end_time = asyncio.get_event_loop().time() + duration
+    events = []
+
+    try:
+        async with listen_sema:
+            async with websockets.connect(uri) as ws:
+                await ws.send(json.dumps({
+                    "method": "subscribeTokenTrade",
+                    "keys": [ca]
+                }))
+                logger.info(f"Listening to trades for {ca}")
+                while asyncio.get_event_loop().time() < end_time:
+                    try:
+                        message = await asyncio.wait_for(ws.recv(), timeout=duration)
+                        data = json.loads(message)
+                        if data.get("method") == "tokenTrade" and "params" in data:
+                            events.append(data["params"])
+                    except (asyncio.TimeoutError, json.JSONDecodeError):
+                        break
+    except (ConnectionClosedError, InvalidURI, WebSocketException) as e:
+        logger.error(f"WebSocket error: {type(e).__name__}: {str(e)}")
+
+    del active_tasks[ca]
+
+    if BAIL_ON_ZERO_TRADES and not events:
+        return
+
+    trades_json = json.dumps(events[-10:], indent=2) if events else "No trades captured."
+    prompt = SYSTEM_PROMPT + f"\nRecent Trades:\n{trades_json}"
+
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=300
+        )
+        reply = response.choices[0].message.content.strip()
+    except Exception as e:
+        reply = f"⚠️ GPT Error: {type(e).__name__}: {str(e)}"
+
+    await application.bot.send_message(chat_id=chat_id, text=f"🚀 {ca[:6]} Degen Verdict:\n{reply}")
+
 async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Usage: /analyze <TOKEN_MINT> [duration_seconds]")
