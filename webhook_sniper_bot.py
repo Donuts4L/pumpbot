@@ -9,14 +9,13 @@ import httpx
 import websockets
 from websockets.exceptions import ConnectionClosedError, InvalidURI, WebSocketException
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
-from openai import AsyncOpenAI, APIStatusError, RateLimitError, APIConnectionError, AuthenticationError
+from openai import AsyncOpenAI, RateLimitError
 from typing import List, Dict, Any
 from cachetools import TTLCache
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Environment validation
 required_envs = ["TELEGRAM_BOT_TOKEN", "OPENAI_API_KEY", "WEBHOOK_URL"]
 missing = [env for env in required_envs if not os.getenv(env)]
 if missing:
@@ -40,17 +39,31 @@ listen_sema = asyncio.Semaphore(5)
 command_debounce = TTLCache(maxsize=1000, ttl=5)
 http_client = httpx.AsyncClient()
 
-SYSTEM_PROMPT = '''
-ANALYSIS PROTOCOL:
-Use EXACTLY these 5 fields:
+SYSTEM_PROMPT = """
+You are a ruthless Solana meme coin sniper. Analyze the provided trade data and respond with EXACTLY the following 5 fields, nothing else:
+
 Verdict: [Bullish/Bearish/Neutral/Trash]
-Confidence: [1-5]
+Confidence: [1–5]
 Strategy: [Action or "Monitor"]
 Stop Loss: [Range/N/A]
 Take Profit: [Range/N/A]
-Wrap analysis in a savage degen tone. You're a ruthless Solana meme sniper.
-If format can't be followed, respond with "FORMAT ERROR"
-'''
+
+If trades are empty, respond:
+Verdict: Neutral
+Confidence: 1
+Strategy: Monitor
+Stop Loss: N/A
+Take Profit: N/A
+
+Example:
+Verdict: Bullish
+Confidence: 4
+Strategy: Accumulate before breakout
+Stop Loss: 0.002-0.003
+Take Profit: 0.006-0.008
+
+Do not include extra commentary. Just the 5 lines in that order.
+"""
 
 client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
@@ -74,7 +87,10 @@ async def startup_tasks():
     try:
         test_response = await client.chat.completions.create(
             model="gpt-4o",
-            messages=[{"role": "user", "content": "Test"}],
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": "Test"}
+            ],
             max_tokens=10
         )
         logger.info("OpenAI API key validated successfully")
@@ -116,7 +132,10 @@ async def test_openai():
     try:
         response = await client.chat.completions.create(
             model="gpt-4o",
-            messages=[{"role": "user", "content": "Test"}],
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": "Test"}
+            ],
             max_tokens=10
         )
         logger.info("OpenAI test successful")
@@ -131,6 +150,15 @@ async def telegram_webhook(request: Request):
     update = Update.de_json(data, application.bot)
     await application.process_update(update)
     return "ok"
+
+@retry(wait=wait_fixed(1), stop=stop_after_attempt(3), retry=retry_if_exception_type(RateLimitError))
+async def call_openai(messages):
+    return await client.chat.completions.create(
+        model="gpt-4o",
+        messages=messages,
+        temperature=0.2,
+        max_tokens=500
+    )
 
 async def listen_for_trade(ca: str, chat_id: int, duration: int):
     uri = "wss://pumpportal.fun/api/data"
@@ -158,18 +186,39 @@ async def listen_for_trade(ca: str, chat_id: int, duration: int):
 
     del active_tasks[ca]
 
-    trades_json = json.dumps(events[-10:], indent=2) if events else "{}"
-    prompt = SYSTEM_PROMPT.strip() + "\n\nRecent Trades (JSON):\n```json\n" + trades_json + "\n```"
+    if not events:
+        reply = """
+Verdict: Neutral
+Confidence: 1
+Strategy: Monitor
+Stop Loss: N/A
+Take Profit: N/A
+""".strip()
+    else:
+        slim_trades = [{
+            "price": t.get("price"),
+            "amount": t.get("amount"),
+            "buyer": t.get("buyer"),
+            "ts": t.get("ts")
+        } for t in events[-5:]]
 
-    try:
-        response = await client.chat.completions.create(
-            model="gpt-4o",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=300
-        )
-        reply = response.choices[0].message.content.strip()
-    except Exception as e:
-        reply = f"⚠️ GPT Error: {type(e).__name__}: {str(e)}"
+        trades_json = json.dumps(slim_trades, indent=2)
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": f"Recent Trades:\n```json\n{trades_json}\n```"}
+        ]
+
+        try:
+            response = await call_openai(messages)
+            reply = response.choices[0].message.content.strip()
+            logger.info(f"Raw GPT Response: {reply}")
+
+            lines = [line.strip().lower() for line in reply.split("\n") if line.strip()]
+            expected_fields = ["verdict:", "confidence:", "strategy:", "stop loss:", "take profit:"]
+            if not (len(lines) == 5 and all(lines[i].startswith(expected_fields[i]) for i in range(5))):
+                reply = "FORMAT ERROR"
+        except Exception as e:
+            reply = f"⚠️ GPT Error: {type(e).__name__}: {str(e)}"
 
     await application.bot.send_message(chat_id=chat_id, text=f"🚀 {ca[:6]} Degen Verdict:\n{reply}")
 
