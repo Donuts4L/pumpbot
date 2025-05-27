@@ -64,7 +64,7 @@ async def startup_tasks():
     logger.info("Starting application initialization")
     try:
         await application.initialize()
-        await application.bot.delete_webhook()
+        await application.bot.delete_webhook(drop_pending_updates=True)
         await application.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
         logger.info("Telegram bot initialized and webhook set")
     except Exception as e:
@@ -131,3 +131,5 @@ async def telegram_webhook(request: Request):
     update = Update.de_json(data, application.bot)
     await application.process_update(update)
     return "ok"
+
+application.add_handler(CommandHandler("analyze", lambda update, context: update.message.reply_text("Bot is online. Analysis command placeholder.")))
