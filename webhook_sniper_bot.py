@@ -125,4 +125,9 @@ async def test_openai():
         logger.error(f"OpenAI test failed: {type(e).__name__}: {str(e)}")
         return {"status": "error", "message": f"{type(e).__name__}: {str(e)}"}
 
-# (rest of code remains unchanged)
+@app.post("/webhook")
+async def telegram_webhook(request: Request):
+    data = await request.json()
+    update = Update.de_json(data, application.bot)
+    await application.process_update(update)
+    return "ok"
