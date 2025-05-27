@@ -44,7 +44,7 @@ You are a ruthless Solana meme coin sniper. Analyze the provided trade data and 
 
 Verdict: [Bullish/Bearish/Neutral/Trash]
 Confidence: [1–5]
-Strategy: [Action or "Monitor"]
+Strategy: [Action or \"Monitor\"]
 Stop Loss: [Range/N/A]
 Take Profit: [Range/N/A]
 
@@ -166,4 +166,4 @@ async def call_openai(messages):
     )
 
 # Remaining logic unchanged
-# ...
+# TODO: Add trade logging + trade count telegram message + validate tokenTrade capture
