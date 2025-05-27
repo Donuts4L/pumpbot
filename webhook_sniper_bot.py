@@ -159,7 +159,7 @@ async def listen_for_trade(ca: str, chat_id: int, duration: int):
     del active_tasks[ca]
 
     trades_json = json.dumps(events[-10:], indent=2) if events else "{}"
-    prompt = SYSTEM_PROMPT + f"\nRecent Trades:\n{trades_json}"
+    prompt = SYSTEM_PROMPT.strip() + "\n\nRecent Trades (JSON):\n```json\n" + trades_json + "\n```"
 
     try:
         response = await client.chat.completions.create(
