@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: pumpbot
+    env: docker
+    plan: starter
+    autoDeploy: true
+    healthCheckPath: /healthz
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: PUMPFUN_WS_URL
+        sync: false
+      - key: LOG_LEVEL
+        value: INFO
+      - key: HEALTHCHECK_PORT
+        value: "8080"
